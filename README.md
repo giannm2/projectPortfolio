@@ -6,7 +6,12 @@ This GitHub page serves as a hub for some of the projects from my data science j
 
 This repository focuses on personal projects, but here are some repository links for larger projects I have worked on:
 [IDEA/CRAFT DeFi Survival Analysis Toolkit](https://github.rpi.edu/DataINCITE/DeFi_App/wiki)
+
 [IDEA CRAFT DeFi Work](https://github.rpi.edu/DataINCITE/IDEA-DeFi-CRAFT)
+
 [ACM-DLT Paper Code Repository](https://github.com/aaronmicahgreen/DeFi-Survival-Analysis-ACM-DLT)
+
 [IDEA Mars Explorer](https://github.rpi.edu/RensselaerIDEA/MarsExplorer)
+
 [DeFi Survival Prediction](https://github.rpi.edu/DataINCITE/DeFi_Survival_Data_NeurIPS2024)
+
