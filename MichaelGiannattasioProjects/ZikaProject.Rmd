@@ -1,0 +1,339 @@
+---
+title: "ZikaProject"
+author: "Michael Giannattasio"
+date: "2/9/2022"
+output: 
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+# Required R package installation:
+# These will install packages if they are not already installed
+# Set the correct default repository
+r = getOption("repos")
+r["CRAN"] = "http://cran.rstudio.com"
+options(repos = r)
+
+
+if (!require("ggplot2")) {
+  install.packages("ggplot2")
+  library(ggplot2)
+}
+if (!require("knitr")) {
+  install.packages("knitr")
+  library(knitr)
+}
+
+if (!require("matlab")) {
+   install.packages("matlab")
+   library(matlab)
+}
+
+if (!require("ggbiplot")) {
+   devtools::install_git("https://github.com/vqv/ggbiplot.git")
+   library(ggbiplot)
+}
+
+if (!require("scatterplot3d")) {
+  install.packages("scatterplot3d")
+  library(scatterplot3d)
+}
+
+if (!require("gplots")) {
+  install.packages("gplots")
+  library(gplots)
+}
+
+if (!require('fields')) {
+  install.packages("fields")
+  library(fields)
+}
+
+if (!require('dplyr')) {
+  install.packages("dplyr")
+  library(dplyr)
+}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Read in the data and create a dataframe
+# We read in the csv indicating that we have row names. 
+Mouse.df <-read.csv("~/MATP-4400/data/MouseHomologData.csv", row.names = 1) 
+
+# Use shorter column names
+colnames(Mouse.df)<-c("-8","-4","0","1","7","16","21","28")
+
+# Create a matrix for our analysis
+Mouse.matrix <- as.matrix(Mouse.df)
+```
+
+```{r}
+set.seed(300)
+
+km <-kmeans(Mouse.matrix, 5) #executes kmeans clustering
+
+# Calculate the PCA
+my.pca <- prcomp(Mouse.matrix, retx=TRUE, center=TRUE, scale=TRUE)
+# Summarize, to see the complete PCA result
+summary(my.pca)
+# Generate a scree plot
+screeplot(my.pca, type = "lines",
+          main = 'Explained Variance of Mouse Genes')
+```
+
+```{r}
+# Calculate x and y scale limits for the biplot
+t<-1.2*max(abs(my.pca$x[,1:2]))
+
+# Generate the biplot using ggbiplot
+p1 <- ggbiplot(my.pca,
+            choices=c(1,2),  # Use PC1, PC2
+            alpha=.1,        # Make dots transparent
+            varname.adjust=1.5,  # Move variables names out a bit
+            scale =0,       # Don't rescale data
+            groups=as.factor(km$cluster)) +
+     ggtitle('Mouse Biplot for PC1 and PC2') + xlim(-t,t) + ylim(-t,t) # title plot and make square
+
+p1# print biplot
+```
+
+The chronological order of the clusters as shown by the clock is as follows:
+  + Stage A = Cluster 2
+  + Stage B = Cluster 4
+  + Stage C = Cluster 1
+  + Stage D = Cluster 5
+  + Stage E = Cluster 3
+These cluster names are to be changed to their actual ordering 
+
+```{r}
+km$cluster[km$cluster==2] <- 'A' #changes cluster 2 (first) to cluster A
+km$cluster[km$cluster==4] <- 'B' #changes cluster 4 (second) to cluster B
+km$cluster[km$cluster==1] <- 'C' #changes cluster 1 (third) to cluster C
+km$cluster[km$cluster==5] <- 'D' #changes cluster 5 (fourth) to cluster D
+km$cluster[km$cluster==3] <- 'E' #changes cluster 3 (last) to cluster E
+
+# Calculate x and y scale limits for the biplot
+t2<-1.2*max(abs(my.pca$x[,1:2]))
+
+# Generate the biplot using ggbiplot
+p2 <- ggbiplot(my.pca,
+            choices=c(1,2),  # Use PC1, PC2
+            alpha=.1,        # Make dots transparent
+            varname.adjust=1.5,  # Move variables names out a bit
+            scale =0,       # Don't rescale data
+            groups=as.factor(km$cluster)) +
+     ggtitle('Mouse Biplot for PC1 and PC2') + xlim(-t,t) + ylim(-t,t) # title plot and make square
+
+p2 #print biplot
+```
+These 5 stages correspond to stages of brain development.
+
+
+Here is a heatmap to represent the data
+
+```{r}
+rownames(km$centers) <- c('C','A','E','B','D')
+heatmap.2(km$centers,
+          dendrogram='row',
+          tracecol = NA,
+          density.info = 'none',
+          main='Cluster Centers of Mouse Brain Development Stages',
+          reorderfun = function(d,w) { d },
+          )
+```
+
+```{r}
+Angle.matrix <- cbind(my.pca$x[,1], my.pca$x[,2]) #stores PC1 and PC2 in a matrix
+Angle.df <- as.data.frame(Angle.matrix) #turns to dataframe for manipulation
+
+Angle2.df <- Angle.df %>% #starts pipeline
+  mutate(angle=atan2(V2,V1)) %>% #makes new column with angle
+  select(angle) #takes only angles
+
+  
+
+Heat.Angles <- cbind(Mouse.matrix, as.matrix(Angle2.df))  #stores in matrix with angle
+
+#heatmap <- heatmap.2(as.matrix(Angle2.df), #starts heatmap
+#          dendrogram = 'row', #plots row dendrogram
+#          density.info = 'none',
+#          tracecol = 'none',
+#          cexRow = 0.5,
+#          cexCol=0.5,
+#          Colv = TRUE
+#          )
+```
+
+```{r}
+Zika.df <-read.csv("~/MATP-4400/data/Zikamicrocephaly_data.csv", row.names = 1) #get zika genes
+
+Intersect.vec <-  intersect(as.character(Zika.df$symbol), as.character(rownames(Mouse.df)))
+#intersects the mouse genes with human genes associated with zika/microcephaly
+
+Intersect.vec #prints intersected gene homologs
+
+Homologs.df <- Mouse.df[rownames(Mouse.df) %in% Intersect.vec,] #filters to only homologs
+
+Homologs.matrix <- as.matrix(Homologs.df) #converts to matrix
+
+#find zika genes with mouse homologs
+
+set.seed(300) #sets random seed
+
+km2 <-kmeans(Homologs.matrix, 5) #executes kmeans clustering
+
+km2$cluster[km2$cluster==5] <- 'A' #changes cluster 5 (first) to cluster A
+km2$cluster[km2$cluster==1] <- 'B' #changes cluster 1 (second) to cluster B
+km2$cluster[km2$cluster==2] <- 'C' #changes cluster 2 (third) to cluster C
+km2$cluster[km2$cluster==4] <- 'E' #changes cluster 4 (fourth) to cluster D
+km2$cluster[km2$cluster==3] <- 'D' #changes cluster 3 (last) to cluster E
+
+# Calculate the PCA
+my.pca2 <- prcomp(Homologs.matrix, retx=TRUE, center=TRUE, scale=TRUE)
+# Summarize, to see the complete PCA result
+summary(my.pca2)
+# Generate a scree plot
+screeplot(my.pca2, type = "lines",
+          main = 'Explained Variance of Mouse Genes')
+
+# Calculate x and y scale limits for the biplot
+t2<-1.2*max(abs(my.pca2$x[,1:2]))
+
+# Generate the biplot using ggbiplot
+p3 <- ggbiplot(my.pca2,
+            choices=c(1,2),  # Use PC1, PC2
+            alpha=.1,        # Make dots transparent
+            varname.adjust=1.5,  # Move variables names out a bit
+            scale =0,       # Don't rescale data
+            groups=as.factor(km2$cluster)) +
+     ggtitle('Mouse Zika Genes Biplot for PC1 and PC2') + xlim(-t2,t2) + ylim(-t2,t2) # title plot and make square
+
+
+p3 #print biplot
+```
+
+```{r}
+# Define cluster_pvals; DO NOT CHANGE!
+cluster_pvals <- function(k, km, myplot.df) {
+# Inputs: k, km, myplot.df
+# Returns: results (dataframe with clusters, pvalues, logodds)
+# Set the p-value and logodds to 0
+pvalue <- zeros(k,1)
+logodds <- zeros(k,1)
+results <- cbind.data.frame(cluster=1:k, pvalue, logodds)
+classdisease <- zeros(k,1)
+classall <- as.vector(table(km$cluster))
+# use dplyr to calculate counts for each cluster
+temp <- myplot.df %>%
+      dplyr::group_by(cluster) %>%
+      dplyr::count(name="freq") # Creates 'freq' column!
+classdisease[temp$cluster] <- temp$freq
+classlogodds <- zeros(k,2)
+totaldisease <- sum(classdisease)
+totalall <- sum(classall)
+# Calculate the log odds ratio for the disease
+for (i in 1:k) {
+  n11 <- classdisease[i] +1 # genes in disease in cluster i
+  n21 <- totaldisease- classdisease[i] +1 # genes in disease not in cluster i
+  n12 <- classall[i]-n11+1 # genes not in disease and in cluster i
+  n22 <- totalall- n11-n21 -n12+1; # genes not in disease and not in cluster
+  res <- fisher.test(matrix(c(n11,n21,n12,n22), 2, 2))
+  results[i,]$pvalue <- res$p.value
+  results[i,]$logodds<- log((n11*n22)/(n12*n21))
+}
+return(results)}
+
+
+# Applying the Helper Function and display the results
+plot.df <- cbind.data.frame(my.pca$x, cluster=as.factor(km$cluster))
+myplot.df<-plot.df[Intersect.vec,]
+# Apply cluster_pvals using the parameters just generated
+clusters <- cluster_pvals(5, km, myplot.df)
+threshold <- 0.1 # Normally set to 0.1
+# Evaluate across our results; create new column
+clusters <-
+  clusters %>%
+  mutate(enriched = if_else(pvalue <= threshold & logodds > 0, TRUE, FALSE))
+# View results
+kable(clusters)
+```
+
+These log odds values shows that Cluster 2 is enriched. It has a p-value less than 0.1 and a logodds ratio greater than 0. The p-value is essentially zero, which confirms this enhancement to an extremely high degree of certainty.
+
+```{r}
+include_graphics("/academics/MATP-4400/Lab5/swot_micro.png")
+```
+
+Here is the SWOT clock image displaying the genes responsible for Microcephaly and to which cluster they belong.
+
+
+
+```{r}
+SchizophreniaCluster.df <-read.csv("~/Data/Schizophrenia_heat_map_data.csv", row.names = 1) 
+#gets schizophrenia information
+
+# Use shorter column names
+colnames(SchizophreniaCluster.df)<-c("Gene","Cluster","0","7","12","19","26","33","49","63","77")
+
+Schizophrenia.df <- SchizophreniaCluster.df %>% #starts dplyr pipeline
+  select("Gene","0","7","12","19","26","33","49","63","77") %>% #takes useful columns
+  remove_rownames() %>% #removes rownames (previously number index)
+  column_to_rownames(var = "Gene") #puts gene name as rownames
+
+Intersect2.vec <-  intersect(as.character(rownames(Schizophrenia.df)), as.character(rownames(Mouse.df))) #finds the genes involved in schizophrenia in mice
+
+Homologs2.df <- Mouse.df[rownames(Mouse.df) %in% Intersect2.vec,] #filters to only homologs
+
+Homologs2.matrix <- as.matrix(Homologs2.df) #converts to matrix
+
+set.seed(300) #sets random seed
+
+km3 <-kmeans(Homologs2.matrix, 5) #executes kmeans clustering
+
+km3$cluster[km3$cluster==2] <- 'A' #changes cluster 2 (first) to cluster A
+km3$cluster[km3$cluster==5] <- 'B' #changes cluster 5 (second) to cluster B
+km3$cluster[km3$cluster==4] <- 'C' #changes cluster 4 (third) to cluster C
+km3$cluster[km3$cluster==3] <- 'D' #changes cluster 3 (fourth) to cluster D
+km3$cluster[km3$cluster==1] <- 'E' #changes cluster 1 (last) to cluster E
+
+# Calculate the PCA
+my.pca3 <- prcomp(Homologs2.matrix, retx=TRUE, center=TRUE, scale=TRUE)
+# Summarize, to see the complete PCA result
+summary(my.pca3)
+# Generate a scree plot
+screeplot(my.pca3, type = "lines",
+          main = 'Explained Variance of Mouse Genes Related to Schizophrenia')
+
+# Calculate x and y scale limits for the biplot
+t3<-1.2*max(abs(my.pca3$x[,1:2]))
+
+# Generate the biplot using ggbiplot
+p4 <- ggbiplot(my.pca3,
+            choices=c(1,2),  # Use PC1, PC2
+            alpha=.1,        # Make dots transparent
+            varname.adjust=1.5,  # Move variables names out a bit
+            scale =0,       # Don't rescale data
+            groups=as.factor(km3$cluster)) +
+     ggtitle('Mouse Schizophrenia Genes Biplot for PC1 and PC2') + xlim(-t3,t3) + ylim(-t3,t3) # title plot and make square
+
+
+p4 #print biplot
+```
+
+```{r}
+# Applying the Helper Function and display the results
+plot2.df <- cbind.data.frame(my.pca3$x, cluster=as.factor(km3$cluster))
+myplot2.df<-plot2.df[Intersect2.vec,]
+# Apply cluster_pvals using the parameters just generated
+clusters2 <- cluster_pvals(5, km, myplot2.df)
+threshold <- 0.1 # Normally set to 0.1
+# Evaluate across our results; create new column
+clusters2 <-
+  clusters2 %>%
+  mutate(enriched = if_else(pvalue <= threshold & logodds > 0, TRUE, FALSE))
+# View results
+kable(clusters2)
+
+```

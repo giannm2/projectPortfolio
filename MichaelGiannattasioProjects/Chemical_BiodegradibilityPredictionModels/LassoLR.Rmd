@@ -1,0 +1,300 @@
+---
+title: "Submission1"
+author: "Michael Giannattasio"
+date: '2022-04-20'
+output: html_document
+---
+
+```{r, include=FALSE, set.seed(20)}
+knitr::opts_chunk$set(cache = T)
+
+# Set the correct default repository
+r = getOption("repos")
+r["CRAN"] = "http://cran.rstudio.com"
+options(repos = r)
+
+
+# These will install required packages if they are not already installed
+if (!require("ggplot2")) {
+   install.packages("ggplot2", dependencies = TRUE)
+   library(ggplot2)
+}
+if (!require("knitr")) {
+   install.packages("knitr", dependencies = TRUE)
+   library(knitr)
+}
+if (!require("xtable")) {
+   install.packages("xtable", dependencies = TRUE)
+   library(xtable)
+}
+if (!require("pander")) {
+   install.packages("pander", dependencies = TRUE)
+   library(pander)
+}
+
+if (!require("devtools")) {
+  install.packages("devtools",dependencies = TRUE ) 
+  library(devtools)
+}
+
+if (!require("usethis")) {
+  install.packages("usethis" ) 
+  library(usethis)
+}
+
+if (!require("e1071")) {
+ install.packages("e1071" ) 
+  library(e1071)
+}
+
+if (!require("pROC")){
+  install.packages("pROC")
+   library(pROC)
+} 
+
+if (!require("dplyr")) {
+   install.packages("dplyr", dependencies = TRUE)
+   library(dplyr)
+}
+
+if (!require("tidyverse")) {
+   install.packages("tidyverse", dependencies = TRUE)
+   library(tidyverse)
+}
+
+if (!require("caret")) {
+   install.packages("caret", dependencies = TRUE)
+   library(caret)
+}
+
+if (!require("xgboost")) {
+   install.packages("xgboost", dependencies = TRUE)
+   library(xgboost)
+}
+
+if (!require("glmnet")) {
+   install.packages("glmnet", dependencies = TRUE)
+   library(glmnet)
+}
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Prepare biodegradability data 
+#get feature names 
+featurenames <- read.csv("~/MATP-4400/data/chems_feat.name.csv",
+                         header=FALSE, 
+                         colClasses = "character")
+
+# get training data and rename with feature names
+cdata.df <-read.csv("~/MATP-4400/data/chems_train.data.csv",
+                    header=FALSE)
+colnames(cdata.df) <- featurenames$V1
+
+# get external testing data and rename with feature names
+tdata.df <-read.csv("~/MATP-4400/data/chems_test.data.csv",
+                    header=FALSE) 
+
+colnames(tdata.df) <- featurenames$V1
+
+class <- read.csv("~/MATP-4400/data/chems_train.solution.csv",
+                  header=FALSE, 
+                  colClasses = "factor") 
+
+class <- class$V1
+```
+
+\tiny
+```{r}
+#ss will be the number of data points in the training set
+n <- nrow(cdata.df)
+ss <- ceiling(n*0.90)
+
+# Set random seed for reproducibility
+set.seed(200)
+train.perm <- sample(1:n,ss)
+
+#Split training and validation data
+train <- cdata.df %>% dplyr::slice(train.perm) 
+validation <- cdata.df %>% dplyr::slice(-train.perm) 
+```
+
+\tiny
+```{r}
+# Initialize the `scaler` on the training data
+#   method = "center" subtracts the mean of the predictor's data from the predictor values
+#   method = "scale" divides by the standard deviation.
+#   NOTE: See `?preProcess` for other methods
+scaler <- preProcess(train, method = c("center", "scale")) 
+
+# Use the `scale` object to normalize our training data
+train <- predict(scaler, train) 
+#summary(train[,1:4])
+
+# Normalize validation data
+validation <- predict(scaler, validation) 
+
+# Normalize testing data
+test <- predict(scaler, tdata.df) 
+
+# Split the output classes
+classtrain <- class[train.perm]
+classval <-class[-train.perm]
+```
+
+Logistic Regression w/ no feature selection
+\tiny
+```{r, warning=FALSE}
+# Fit LR model to classify all the variables
+train.df <- cbind(train,classtrain)
+lrfit <- glm(classtrain~., data=train.df,
+             family = "binomial")
+
+# Predict training (OUTPUTS PROBABILITIES)
+ranking_lr.train <- predict(lrfit,train,
+                            type="response") 
+
+# Predict validation (OUTPUTS PROBABILITIES)
+ranking_lr.val <- predict(lrfit,validation,
+                          type="response") 
+
+ranking_lrtest <- as.numeric(predict(lrfit, test))
+```
+\tiny
+```{r}
+# no need to convert to 0 and 1 since ranking needed for AUC.
+write.table(ranking_lrtest,file = "classification.csv", row.names=F, col.names=F)
+```
+
+\tiny
+```{r}
+# Here is the mean prediction file for submission to the website 
+# features should be a column vector of 0's and 1's. 
+# 1 = keep feature, 0 = don't
+features<-matrix(1,nrow=(ncol(train)),ncol=1)
+rownames(features) <- colnames(train)
+
+write.table(features,file = "selection.csv", row.names=F, col.names=F)
+```
+
+\tiny
+```{r}
+# get time
+time <-  format(Sys.time(), "%H%M%S")
+
+#This automatically generates a compressed (zip) file 
+system(paste0("zip -u JSEEntry-", time, ".csv.zip classification.csv"))
+system(paste0("zip -u JSEEntry-", time, ".csv.zip selection.csv"))
+
+paste0("The name of your entry file: JSEEntry-", time, ".csv.zip")
+```
+
+Logistic Regression w/ LASSO feature selection
+```{r, warning=FALSE}
+classtrain <- (as.numeric(classtrain)-1)
+classval <- (as.numeric(classval)-1)
+
+glmfit <- glmnet(train, classtrain, family ='binomial',
+                  alpha=1,nlambda=100, standardize=FALSE)
+
+plot(glmfit, label=TRUE)
+
+##try slambda being smaller, like 0.0075 and test
+glmfitPred <- predict(object=glmfit, s=0.007, newx=as.matrix(validation))
+glmfitPredict <- as.numeric(glmfitPred)
+```
+
+
+```{r}
+# Predict the test data (OUTPUTS LOG-ODDS) to get rankings
+glmfitTest <- as.numeric(predict(object=glmfit, s=0.007, newx=as.matrix(test)))
+
+# no need to convert to 0 and 1 since ranking needed for AUC.
+write.table(glmfitTest,file = "classification.csv", row.names=F, col.names=F)
+```
+
+\tiny
+```{r}
+lasso_coef = predict(glmfit, type = "coefficients", s = 0.01332)[,1]
+
+significant.variables <- as.data.frame(lasso_coef) %>% 
+   dplyr::select(lasso_coef) != 0
+
+significant.variables <- significant.variables[-1,]
+# Here is the mean prediction file for submission to the website 
+# features should be a column vector of 0's and 1's. 
+# 1 = keep feature, 0 = don't
+features<-matrix(0,nrow=(ncol(train)),ncol=1)
+rownames(features) <- colnames(train)
+
+# Set the ones we want to keep to 1
+features[significant.variables] <- 1
+write.table(features,file = "selection.csv", row.names=F, col.names=F)
+```
+
+\tiny
+```{r}
+# get time
+time <-  format(Sys.time(), "%H%M%S")
+
+#This automatically generates a compressed (zip) file 
+system(paste0("zip -u JSEEntry-", time, ".csv.zip classification.csv"))
+system(paste0("zip -u JSEEntry-", time, ".csv.zip selection.csv"))
+
+paste0("The name of your entry file: JSEEntry-", time, ".csv.zip")
+```
+
+
+Logistic Regression w/ Boruta
+```{r, warning=FALSE}
+trainNoFac.df <- cbind(train,classtrain)
+borutaTrain <- Boruta(classtrain~., data=trainNoFac.df, doTrace = 2)
+
+borutaFinal <- TentativeRoughFix(borutaTrain)
+features <- getSelectedAttributes(borutaFinal)
+
+significant.variables <- colnames(train) %in% features
+significant.variables <- as.data.frame(significant.variables)
+rownames(significant.variables)<- colnames(train)
+significant.variables <- as.matrix(significant.variables)
+
+trainBoruta <- train %>% select_if(significant.variables)
+trainBoruta <- cbind(trainBoruta, classtrain)
+
+borutaLRmodel <- glm(classtrain~., data=trainBoruta,family = "binomial")
+```
+
+\tiny
+```{r}
+# Predict the test data (OUTPUTS LOG-ODDS) to get rankings
+ranking_lrtest <- as.numeric(predict(borutaLRmodel, test))
+
+# no need to convert to 0 and 1 since ranking needed for AUC.
+write.table(ranking_lrtest,file = "classification.csv", row.names=F, col.names=F)
+```
+
+\tiny
+```{r}
+# Here is the mean prediction file for submission to the website 
+# features should be a column vector of 0's and 1's. 
+# 1 = keep feature, 0 = don't
+features<-matrix(0,nrow=(ncol(train)),ncol=1)
+rownames(features) <- colnames(train)
+
+# Set the ones we want to keep to 1
+features[significant.variables,1] <- 1
+write.table(features,file = "selection.csv", row.names=F, col.names=F)
+```
+
+\tiny
+```{r}
+# get time
+time <-  format(Sys.time(), "%H%M%S")
+
+#This automatically generates a compressed (zip) file 
+system(paste0("zip -u JSEEntry-", time, ".csv.zip classification.csv"))
+system(paste0("zip -u JSEEntry-", time, ".csv.zip selection.csv"))
+
+paste0("The name of your entry file: JSEEntry-", time, ".csv.zip")
+```

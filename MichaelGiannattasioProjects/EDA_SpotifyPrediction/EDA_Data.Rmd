@@ -1,0 +1,342 @@
+---
+title: "EDA Final Project Draft"
+author: "Michael Giannattasio and Caitlyn Barnwell"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+if (!require("ggplot2")) {
+   install.packages("ggplot2", dependencies = TRUE)
+   library(ggplot2)
+}
+if (!require("knitr")) {
+   install.packages("knitr", dependencies = TRUE)
+   library(knitr)
+}
+if (!require("readr")) {
+   install.packages("readr", dependencies = TRUE)
+   library(readr)
+}
+if (!require('tidyverse')) {
+install.packages("tidyverse")
+library(tidyverse)
+}
+if (!require('lubridate')) {
+install.packages("lubridate")
+library(lubridate)
+}
+if (!require('corrplot')) {
+install.packages("corrplot")
+library(corrplot)
+}
+if (!require('TTR')) {
+install.packages("TTR")
+library(TTR)
+}
+if (!require('MLmetrics')) {
+install.packages("MLmetrics")
+library(MLmetrics)
+}
+if (!require('rstatix')) {
+install.packages("rstatix")
+library(rstatix)
+}
+if (!require('reticulate')) {
+install.packages("reticulate")
+library(reticulate)
+}
+if (!require('xgboost')) {
+install.packages("xgboost")
+library(xgboost)
+}
+if (!require('caret')) {
+install.packages("caret")
+library(caret)
+}
+```
+
+#Part 1 of the Project: 
+Load in the Data. The data is information on Spotify songs from playlists from 1957-2020. Here it is:
+```{r}
+df <- readr::read_csv("Lec12_spotify_songs_classification (1).csv")
+summary(df)
+```
+
+The dataset is comprised of IDs for each song (name, artist, ID), information on the playlist they came from, and numeric features characterizing the sound of the songs. Danceability, energy, mode, speechiness, acousticness, instrumentalness, liveness, and valence are all normalized values on the interval [0,1].
+
+#Part 2 of the project:
+We will look at the data quality:
+```{r}
+dim(df)
+df <- na.omit(df) #removes NAs (no changes - size is still 32828x23)
+dim(df)
+```
+Data has no NA's (size is the same after removal of them).
+
+We now check for duplicate values:
+```{r}
+duplicateIndices = duplicated(df[,2:3])
+summary(duplicateIndices) 
+df <- df %>%
+  distinct(track_name, track_artist, .keep_all = TRUE)
+```
+Data had duplicate tracks, so they were removed. These duplicates were noticed upon close inspection of the dataset, as the entire row isn't duplicated - songs are placed identically with different IDs.
+
+Looking through the partially-cleaned data shows cleanliness and good quality, here are the updated summary statistics:
+```{r}
+head(df)
+summary(df)
+```
+
+Lets try outlier detection for the removal of outliers based on the IQR method:
+```{r}
+outlierreplacement <- function(dataframe){
+   dataframe %>%          
+           map_if(is.numeric, ~ replace(.x, .x %in% boxplot.stats(.x)$out, NA)) %>%
+           bind_cols 
+}
+outlierDf <- outlierreplacement(df)
+df <- na.omit(outlierDf)
+```
+
+This data appears sufficiently cleaned for our purposes, with data appearing accurate both via inspection and also with these statistics:
+```{r}
+head(df)
+summary(df)
+```
+
+To visualize correlations between variables, a correlation matrix is generated, showing them visually with correlation magnitudes in the first plot and then printing the pairs of most correlated other variables. 
+```{r}
+numericDf <- df %>% 
+  select(where(is.numeric))
+corrplot::corrplot(cor(numericDf))
+corrMatrix <- as.matrix(cor(numericDf), nrow=13) 
+colnames(corrMatrix)
+colnames(corrMatrix)[apply(corrMatrix, 1, function (x) which(x==max(x[x<1])))]
+```
+For example, track_popularity is more correlated with danceability, danceability with valence, etc.
+
+Here are some tableu-generated data visualizations:
+```{r, echo=FALSE, out.width = '40%'}
+knitr::include_graphics("~/EDA_Project/Avg_Characteristics_per_Year.png")
+```
+This graph shows some minor trends in musical dynamics  by Year. With small amounts of early songs, that data is likely not super accurate, but certain features like energy appear to have risen. 
+
+```{r, echo=FALSE, out.width = '40%'}
+knitr::include_graphics("~/EDA_Project/Hits_per_Year.png")
+```
+We classify "hits" as a song with popularity over 60. These have been very few up until the 2010s with a gradual increase. However, with the internet explosion and massive globalization, they have shot up exponentially in recent years.
+
+```{r, echo=FALSE, out.width = '40%'}
+knitr::include_graphics("~/EDA_Project/Hits_by_Genre_per_Year.png")
+```
+These "hits" are then broken down by genre.
+
+```{r, echo=FALSE, out.width = '40%'}
+knitr::include_graphics("~/EDA_Project/Total_Hits_per_Genre.png")
+```
+Similar to the last one, pop and rap seem to be the big "hit" genres.
+
+```{r, echo=FALSE, out.width = '40%'}
+knitr::include_graphics("~/EDA_Project/Tracks_per_Year.png")
+```
+This graph of total tracks is nearly identical in shape (not magnitude) to the hits graph. It appears the proportion of hits has not changed over time.
+
+```{r, echo=FALSE, out.width = '40%'}
+knitr::include_graphics("~/EDA_Project/Tracks_by_Genre_per_Year.png")
+```
+These tracks are then broken down by genre.
+
+
+#Part 3 of the project:
+
+We will now carry out statistical tests. 
+
+First we test to see if there is enough evidence that the mean duration of songs in the dataset is different from the perceived average 3.5 minutes. The null hypothesis will be that there is no difference between the average of the dataset and the 3.5 minutes. The alternative hypothesis will be that they are not equal.
+```{r}
+df$durationMins <- df$duration_ms/(60*1000)
+t.test(df$durationMins, alternative = "two.sided", mu = 3.5)
+```
+We reject the null hypothesis and conclude songs are not, on average, equal to 3.5 minutes in this data.
+
+Next we test to see if there is enough evidence that the average popularity of songs in the dataset is different from our cutoff of a "hit song" - 60. The null hypothesis will be that there is no difference between the average of the dataset and the average popularity and 60. The alternative hypothesis will be that they are not equal.
+```{r}
+t.test(df$track_popularity, alternative = "less", mu = 60)
+```
+We reject the null hypothesis and conclude that the average song and a "hit" are significantly different. This makes sense given the nature of a "hit" and verifies our characterization.
+
+We now do the shapiro-wilk test to test whether the duration of a song is approximately normally distributed. The null hypothesis is that the sample comes from a normal distribution, and the alternative hypothesis is that it does not. 
+```{r}
+sample <- dplyr::sample_n(df, 5000)
+shapiro.test(sample$durationMins)
+```
+We sample the data as otherwise the data is too large. We fail to reject the null hypothesis and conclude the data comes from a normal distribution.
+
+##Statistical Tests for Model Assumptions:
+
+We now do the shapiro-wilk test to test whether the track_popularity is approximately normally distributed for model assumption checking. The null hypothesis is that the sample comes from a normal distribution, and the alternative hypothesis is that it does not. 
+```{r}
+sample <- dplyr::sample_n(df, 5000)
+shapiro.test(sample$track_popularity)
+```
+We sample the data as otherwise the data is too large. We fail to reject the null hypothesis and conclude the data comes from a normal distribution. Normality is a reasonable assumption.
+
+We will do a test for independence of the numeric values in the data for regression assumption checking. The Null hypothesis (H0): the row and the column variables of the contingency table are independent and the Alternative hypothesis (H1): row and column variables are dependent:
+```{r}
+chisq.test(abs(numericDf))
+```
+We fail to reject the null and conclude independence. Independence is a reasonable assumption.
+
+
+#Part 4 of the Project:
+
+##Regression
+Now we will carry out a multiple regression based on all other numeric features attempting to predict track popularity. 
+```{r}
+trackMLR <- lm(track_popularity ~ duration_ms + tempo + valence + liveness + instrumentalness + acousticness + speechiness + mode + loudness + key + energy + danceability, data = df)
+summary(trackMLR)
+```
+
+We remove the insignificant regressors (at 0.05 significance) and get:
+```{r}
+trackMLR2 <- lm(track_popularity ~ duration_ms + tempo + instrumentalness + acousticness + speechiness + mode + loudness + energy + danceability, data = df)
+summary(trackMLR2)
+```
+
+The adjusted R-square value is very poor, highlight that predictivity is likely very low. When adjusted for the number of regressors, only 3.746% of the variability in track_popularity is explained by this model. Since this is so low I will also do a more robust, nonlinear predictive method in an attempt to achieve a higher r-squared value (see xgboost below).
+
+We now check model assumptions - which are all reasonably accurate (makes sense with large n - due to CLT and normality and independence were verified robustly before):
+```{r}
+par(mfrow=c(2,2))
+plot(trackMLR2)
+```
+They seem valid visually as well.
+
+Let's also try to predict the song duration using multiple regression.
+```{r}
+trackMLR3 <- lm(duration_ms ~ track_popularity + tempo + valence + liveness + instrumentalness + acousticness + speechiness + mode + loudness + key + energy + danceability, data = df)
+summary(trackMLR3)
+```
+
+We remove the insignificant regressors and re-run:
+```{r}
+trackMLR4 <- lm(duration_ms ~ track_popularity + tempo + valence + liveness + instrumentalness + acousticness + speechiness + loudness + danceability, data = df)
+summary(trackMLR4)
+```
+
+The adjusted R-square value is very poor, highlight that predictivity is likely very low. When adjusted for the number of regressors, only 4.803% of the variability in track_popularity is explained by this model.
+We now check model assumptions - which are all reasonably accurate (makes sense with large n - due to CLT).
+```{r}
+par(mfrow=c(2,2))
+plot(trackMLR4)
+```
+They seem valid visually.
+
+##XGBoost for Track Popularity Prediction
+
+We now proceed with an extra model of xgboost for regression - hoping to capture more variability in response with the model.
+First the data is properly converted and processed.
+```{r}
+set.seed(123) # set seed for generating random data.
+indices <- sample(seq_len(nrow(numericDf)), size = floor(0.8 * nrow(numericDf)))
+
+train <- numericDf[indices, ]
+test <- numericDf[-indices, ]
+
+train_x = data.matrix(train %>% select(-track_popularity))
+train_y = data.matrix(train %>% select(track_popularity))
+test_y = data.matrix(test %>% select(track_popularity))
+test_x = data.matrix(test %>% select(-track_popularity))
+
+xgb_train = xgb.DMatrix(data = train_x, label = train_y)
+xgb_test = xgb.DMatrix(data = test_x, label = test_y)
+```
+
+We now proceed to model training:
+```{r, results='hide'}
+watchlist = list(train=xgb_train, test=xgb_test)
+model = xgb.train(data = xgb_train, max.depth = 3, watchlist=watchlist, nrounds = 100)
+model_xgboost = xgboost(data = xgb_train, max.depth = 3, nrounds = 86, verbose = 0)
+```
+
+Now we view the test-set performance for an indication to predictive accuracy:
+```{r}
+pred_y = predict(model_xgboost, xgb_test)
+
+RMSE(test_y, pred_y)
+```
+The RMSE is extremely low - this is a good indicator of very small error in the regression model. With more modelling accuracy desired, hyperparameter tuning with cross-validation would be ideal - but this is just a small test.
+
+##Forecasting
+We want to forecast the number of songs in a given year. Let's check the songs produced per year and the trend of that over time again:
+```{r}
+songsPerYear <- df %>%
+  mutate(track_album_release_date = mdy(track_album_release_date), year = year(track_album_release_date)) %>%
+  group_by(year) %>% 
+  summarise(songsPerYear=n())
+ggplot(songsPerYear, aes(x=year))+
+  geom_line(aes(y=songsPerYear, color = "Actual"))
+```
+
+Data appears to follow a trend that has no seasonality, exponential smoothing and Holt-Winters are not suited for this. Lets proceed with different values for Moving Averages:
+```{r}
+songsPerYear$tenSMA <- SMA(songsPerYear$songsPerYear,n=10)
+MAPE((songsPerYear$tenSMA)[10:60], (songsPerYear$songsPerYear)[10:60])
+songsPerYear$sevenSMA <- SMA(songsPerYear$songsPerYear,n=7)
+MAPE((songsPerYear$sevenSMA)[7:60], (songsPerYear$songsPerYear)[7:60])
+songsPerYear$threeSMA <- SMA(songsPerYear$songsPerYear,n=3)
+MAPE((songsPerYear$threeSMA)[3:60], (songsPerYear$songsPerYear)[3:60])
+songsPerYear$twoSMA <- SMA(songsPerYear$songsPerYear,n=2)
+MAPE((songsPerYear$twoSMA)[2:60], (songsPerYear$songsPerYear)[2:60])
+
+ggplot(songsPerYear, aes(x=year))+
+  geom_line(aes(y=tenSMA, color = "10-SMA")) +
+  geom_line(aes(y=sevenSMA, color = "7-SMA")) +
+  geom_line(aes(y=threeSMA, color = "3-SMA")) +
+  geom_line(aes(y=twoSMA, color = "2-SMA")) +
+  geom_line(aes(y=songsPerYear, color = "Actual"))
+```
+The trend seems extremely dependent on recent results, as the lower moving averages are extremely predictive. The MAPEs consistently decrease and the fit becomes better with more recency bias in the forecasting (lower-valued MAPEs).
+
+#Part 5 of the Project:
+We adjust the data to be ported into python:
+```{r}
+optimizationDf <- df %>%
+  mutate(track_album_release_date = mdy(track_album_release_date), year = year(track_album_release_date), decade = floor(year / 10) * 10) %>% 
+  dplyr::select(track_id,track_popularity,track_id, energy, danceability, speechiness, loudness, decade, playlist_genre)
+optimizationDf <- na.omit(optimizationDf)
+# write_csv(optimizationDf, file = "optimizationSpotify.csv")
+```
+
+A screenshot of the python code is included here:
+```{r pressure, echo=FALSE, fig.cap="A caption", out.width = '100%'}
+knitr::include_graphics("PythonOptimizationSS.png")
+```
+For this, a binary boolean variable xi is created with the length of tracks, with value 1 if the song is to be included in the playlist and 0 elsewhere. This is the decision variable of interest. We then proceed to two different constraint sets for two different playlists - an uptempo mix and a more relaxed mix. For both, the main objective is set to the average track popularity in the playlist. This is to be maximized, as popular songs are desired.
+
+For both playlists, the sum constraints ensure the length of the playlist (slightly different constraints of 20 vs 25 minimum , max of 100 songs). The general syntax of the constraints for the rest is to use matrix multiplication/dot product to calculate a vector of the values of popularities for included songs. They are then divided by the number of non-zero entries in it - to get an accurate representation of the playlist mean. 
+
+The optimizations were carried out and optimal solutions were found (using the cvxpy library GLPK-MI solver).
+
+The csv with the chosen songs are imported now:
+```{r}
+playlistSongs <- read_csv("Optimized_Playlist.csv", col_names = FALSE)
+
+optimizedDf <- cbind.data.frame(optimizationDf,playlistSongs) %>% 
+  rename(included1=`X1`, included2=`X2`) %>% 
+  dplyr::select(track_id, included1, included2)
+
+firstPlaylist <- full_join(x=df,y=optimizedDf, by="track_id") %>% 
+  filter(included1==1)
+firstPlaylist
+
+secondPlaylist <- full_join(x=df,y=optimizedDf, by="track_id") %>% 
+  filter(included2==1)
+secondPlaylist
+```
+The songs can be seen here for each playlist, and will be played for context. As can be seen by the data values, some very unpopular songs were added to ensure criteria matching. For future playlist optimization, a minimum track popularity per song should be implemented to prevent this - along with potential relaxation of constraints.

@@ -1,0 +1,65 @@
+```{r}
+library(readr)
+library(dplyr)
+library(survival)
+library(survminer)
+library(pec)
+select <- dplyr::select
+rename <- dplyr::rename
+## Helper functions
+not_all_na <- function(x) any(!is.na(x))
+`%notin%` <- Negate(`%in%`)
+```
+
+```{r}
+transactions <- read_rds("/data/IDEA_DeFi_Research/Data/Lending_Protocols/Aave/V2/Ethereum/transactions.rds")
+source("./Data_Creation_Functions/createSurvData.R")
+```
+
+```{r}
+# Define a question via the parameters of the createSurvData function:
+indexEventSet = c("borrow")
+outcomeEventSet = c("liquidation")
+
+subjects = c("user")
+observationPeriod = c(1609477200, 1633060800)
+
+indexCovariates = c("coinType","reserve", "amountUSD", "borrowRateMode", "userAddressType", "liquidatedCount", "liquidatedValue")
+outcomeCovariates = c()
+
+userLiquidatedCounts <- transactions %>%
+  filter(between(timestamp, 1609477200, 1633060800), type=="liquidation") %>%
+  select(where(not_all_na)) %>%
+  tidyr::drop_na() %>%
+  distinct() %>%
+  group_by(user) %>% 
+  dplyr::summarise(liquidatedCount = n(), liquidatedValue = sum(principalAmountUSD))
+
+coinUsages <- transactions %>%
+  mutate(reserve = str_to_upper(reserve)) %>%
+  select(reserve) %>%
+  group_by(reserve) %>%
+  summarize(count = n()) %>%
+  filter(count > 100000) %>%
+  drop_na()
+
+transactions <- transactions %>% 
+  full_join(userLiquidatedCounts, by = c("user"))%>%
+  filter(reserve %in% coinUsages$reserve | principalReserve %in% coinUsages$reserve) %>%
+  mutate(coinType = case_when(reserve %in% c("USDT", "USDC", "TUSD", "DAI", "SUSD", "USDT.e", "DAI.e", "USDC.e", "BUSD", "GUSD", "LUSD", "USDt", "1DAI", "1USDT", "1USDC", "fUSDT") ~ "Stable",
+                              TRUE ~ "Non-Stable"))
+
+survivalData <- createSurvData(indexEventSet, 
+                               outcomeEventSet, 
+                               transactions, 
+                               subjects, 
+                               observationPeriod, 
+                               indexCovariates, 
+                               outcomeCovariates)
+
+formula <- paste0("Surv(as.numeric(timeDiff/86400), as.numeric(status)) ~ ", str_c(indexCovariates, collapse="+"))
+coxFit <- coxph(as.formula(formula), data = survivalData)
+
+summary(coxFit)
+
+```

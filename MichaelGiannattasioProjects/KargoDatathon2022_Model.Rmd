@@ -1,0 +1,149 @@
+---
+title: "KargoDatathon"
+author: "Michael Giannattasio, Rachael White"
+date: '2022-04-02'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+if (!require("ggplot2")) {
+   install.packages("ggplot2")
+   library(ggplot2)
+}
+if (!require('lubridate')){
+  install.packages("lubridate")
+   library(lubridate)
+} 
+if (!require('dominanceanalysis')){
+  install.packages("dominanceanalysis")
+   library(dominanceanalysis)
+} 
+if (!require("knitr")) {
+   install.packages("knitr")
+   library(knitr)
+}
+if (!require("dplyr")) {
+   install.packages("dplyr")
+   library(dplyr)
+}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+Kargo.df <- read.csv('~/Data/rpi_data_sm.csv')[,c(3,4,5,6,11,12,14,15,17)]
+
+vecMT <- c('banner-native','banner-video-native', 'banner-video')
+Kargo.df <- Kargo.df %>%
+  filter(!MEDIATYPE %in% vecMT)
+
+vecOS <- c('Bot','WindowsPhone','Unknown')
+Kargo.df <- Kargo.df %>%
+  filter(!OPERATINGSYSTEM %in% vecOS)
+
+vecAF <- c('0.05','0.20','0.24', '0.75', '15.00')
+Kargo.df <- Kargo.df %>%
+  filter(!AUCTIONFLOOR %in% vecAF)
+
+Kargo.df <- Kargo.df %>%
+  filter(COUNTRY == 'US') %>%
+  dplyr::select(-COUNTRY)
+
+Kargo.df <- Kargo.df %>%
+  mutate(Hour = hour(ymd_hms(as.POSIXlt(TIME, format="%Y-%m-%dT%H:%M:%S"))), TIME=NULL)
+```
+
+```{r}
+n <- nrow(Kargo.df)
+train.size <- ceiling(n*0.8)
+set.seed(300)
+trainID <- sample(n,train.size)
+# Training data
+dsptrain <- Kargo.df[trainID,]
+# Validation data
+dspval <- Kargo.df[-trainID,]
+
+
+DSP.df <- dsptrain %>%
+  group_by(DSP) %>%
+  summarise(yesFreqDSP = mean(ISYESBID))
+dsptrain <- left_join(dsptrain, DSP.df)
+
+
+Publisher.df <- dsptrain %>%
+  group_by(PUBLISHER) %>%
+  summarise(yesFreqPub = mean(ISYESBID))
+dsptrain <- left_join(dsptrain, Publisher.df)
+
+
+dropCols <- c('DSP','PUBLISHER') 
+dsptrain <-dsptrain %>% 
+  # select(-dropCols) %>% 
+  relocate(ISYESBID, .after = yesFreqPub)
+
+names <- c(1:4,8)
+dsptrain[,names] <- lapply(dsptrain[,names], factor)
+```
+
+```{r}
+DSP.df <- dspval %>%
+  group_by(DSP) %>%
+  summarise(yesFreqDSP = mean(ISYESBID))
+dspval <- left_join(dspval, DSP.df)
+
+
+Publisher.df <- dspval %>%
+  group_by(PUBLISHER) %>%
+  summarise(yesFreqPub = mean(ISYESBID))
+dspval <- left_join(dspval, Publisher.df)
+
+
+dropCols <- c('DSP','PUBLISHER') 
+dspval <-dspval %>% 
+  select(-dropCols) %>% 
+  relocate(ISYESBID, .after = yesFreqPub)
+
+
+names <- c(1:4,8)
+dspval[,names] <- lapply(dspval[,names], factor)
+```
+
+```{r}
+# Create Logistic Regression Classifier
+# Train the model
+logistic_model <- glm(ISYESBID ~ ., family = binomial(), data = dsptrain)
+saveRDS(logistic_model,"kargoLogisticModel.rds")
+```
+
+```{r}
+summary(logistic_model)
+```
+
+## Predict
+```{r}
+# Predict testing data
+# Predicting in the test dataset
+pred_probs <- predict(logistic_model, newdata=dspval, type = "response")
+# Converting from probability to actual response predictions
+predicted_responses <- as.factor(ifelse(pred_probs >= 0.5, "1", "0"))
+# View results
+confusion.matrix = table(dspval$ISYESBID, predicted_responses)
+kable(confusion.matrix)
+```
+
+```{r echo=FALSE}
+# View accuracies
+accn <-confusion.matrix[1,1]/(confusion.matrix[1,1]+confusion.matrix[1,2])
+accp <-confusion.matrix[2,2]/(confusion.matrix[2,1]+confusion.matrix[2,2])
+accb<-(accp+accn)/2
+c <- c("Class 1","Class -1","Balanced")
+vals <-c(accp*100,accn*100,accb*100)
+acc.table <- data.frame(c,vals)
+colnames(acc.table) <- c("Accuracy","Val (%)")
+acc_rf_T <- acc.table
+kable(acc.table)
+```
+
+```{r}
+da<-dominanceAnalysis(logistic_model)
+plot(da, which.graph ="general",fit.function = "r2.m")
+```

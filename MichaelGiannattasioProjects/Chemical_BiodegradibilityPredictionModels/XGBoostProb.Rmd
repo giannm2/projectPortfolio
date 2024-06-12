@@ -1,0 +1,259 @@
+---
+title: "Submission2"
+author: "Michael Giannattasio"
+date: '2022-04-20'
+output: html_document
+---
+
+```{r, include=FALSE, set.seed(20)}
+knitr::opts_chunk$set(cache = T)
+
+# Set the correct default repository
+r = getOption("repos")
+r["CRAN"] = "http://cran.rstudio.com"
+options(repos = r)
+
+
+# These will install required packages if they are not already installed
+if (!require("ggplot2")) {
+   install.packages("ggplot2", dependencies = TRUE)
+   library(ggplot2)
+}
+if (!require("knitr")) {
+   install.packages("knitr", dependencies = TRUE)
+   library(knitr)
+}
+if (!require("xtable")) {
+   install.packages("xtable", dependencies = TRUE)
+   library(xtable)
+}
+if (!require("pander")) {
+   install.packages("pander", dependencies = TRUE)
+   library(pander)
+}
+
+if (!require("devtools")) {
+  install.packages("devtools",dependencies = TRUE ) 
+  library(devtools)
+}
+
+if (!require("usethis")) {
+  install.packages("usethis" ) 
+  library(usethis)
+}
+
+if (!require("e1071")) {
+ install.packages("e1071" ) 
+  library(e1071)
+}
+
+if (!require("pROC")){
+  install.packages("pROC")
+   library(pROC)
+} 
+
+if (!require("dplyr")) {
+   install.packages("dplyr", dependencies = TRUE)
+   library(dplyr)
+}
+
+if (!require("tidyverse")) {
+   install.packages("tidyverse", dependencies = TRUE)
+   library(tidyverse)
+}
+
+if (!require("caret")) {
+   install.packages("caret", dependencies = TRUE)
+   library(caret)
+}
+
+if (!require("xgboost")) {
+   install.packages("xgboost", dependencies = TRUE)
+   library(xgboost)
+}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Prepare biodegradability data 
+#get feature names 
+featurenames <- read.csv("~/MATP-4400/data/chems_feat.name.csv",
+                         header=FALSE, 
+                         colClasses = "character")
+
+# get training data and rename with feature names
+cdata.df <-read.csv("~/MATP-4400/data/chems_train.data.csv",
+                    header=FALSE)
+colnames(cdata.df) <- featurenames$V1
+
+# get external testing data and rename with feature names
+tdata.df <-read.csv("~/MATP-4400/data/chems_test.data.csv",
+                    header=FALSE) 
+
+colnames(tdata.df) <- featurenames$V1
+
+class <- read.csv("~/MATP-4400/data/chems_train.solution.csv",
+                  header=FALSE, 
+                  colClasses = "factor") 
+
+class <- class$V1
+```
+
+\tiny
+```{r}
+#ss will be the number of data points in the training set
+n <- nrow(cdata.df)
+ss <- ceiling(n*0.90)
+
+# Set random seed for reproducibility
+set.seed(200)
+train.perm <- sample(1:n,ss)
+
+#Split training and validation data
+train <- cdata.df %>% dplyr::slice(train.perm) 
+validation <- cdata.df %>% dplyr::slice(-train.perm) 
+```
+
+\tiny
+```{r}
+# Initialize the `scaler` on the training data
+#   method = "center" subtracts the mean of the predictor's data from the predictor values
+#   method = "scale" divides by the standard deviation.
+#   NOTE: See `?preProcess` for other methods
+scaler <- preProcess(train, method = c("center", "scale")) 
+
+# Use the `scale` object to normalize our training data
+train <- predict(scaler, train) 
+#summary(train[,1:4])
+
+# Normalize validation data
+validation <- predict(scaler, validation) 
+
+# Normalize testing data
+test <- predict(scaler, tdata.df) 
+
+# Split the output classes
+classtrain <- class[train.perm]
+classval <-class[-train.perm]
+```
+
+```{r}
+train.df <- cbind(train,classtrain)
+lrfit <- glm(classtrain~., data=train.df,
+             family = "binomial")
+
+# Get data frame with coefficient data excluding intercept
+coefficients.df <- as.data.frame(summary(lrfit)$coeff) %>% 
+   dplyr::slice(2:n()) 
+
+# Boolean vector with TRUE corresponding to significant variables
+significant.variables <- coefficients.df %>% 
+   dplyr::select(last_col()) <= 0.15  # What happens if you tweak this???
+
+# Keep only statistically significant features
+train.fs <- train %>% select_if(significant.variables)
+validation.fs <- validation %>% select_if(significant.variables)
+```
+
+\tiny
+```{r, warning=FALSE}
+classtrain3 <- (as.numeric(classtrain)-1)
+classval3 <- (as.numeric(classval)-1)
+
+dtrain <- xgb.DMatrix(data = as.matrix(train.fs), label = classtrain3)
+dval <- xgb.DMatrix(data = as.matrix(validation.fs), label = classval3)
+
+
+xgbModel <- xgb.train(data = dtrain, 
+ eta = 0.1,
+ max_depth = 10, 
+ nrounds = 20,
+ subsample = 0.5,
+ colsample_bytree = 0.5,
+ nthread = 3,
+ eval_metric = "auc",
+ objective = "binary:logistic"
+)
+
+# Predict training (OUTPUTS PROBABILITIES)
+rankingXGBtrain <- predict(xgbModel,data.matrix(train.fs),
+                            type="response") 
+
+# Predict validation (OUTPUTS PROBABILITIES)
+rankingXGBval <- predict(xgbModel,data.matrix(validation.fs),
+                          type="response") 
+```
+
+\tiny
+```{r, echo=TRUE}
+# This is a group of helper functions meant to avoid repetitiveness and shorten presentation output
+
+prob_to_class <- function(ranking_lr) {
+   # This helper function converts LR probability outputs into 1 and -1 classes
+   temp <- ranking_lr > 0.5
+   temp[temp==TRUE] <- 1
+   temp[temp==FALSE] <- -1 
+   return(as.factor(temp))
+}
+```
+
+\tiny
+```{r, echo=TRUE}
+sensitivity_from_confmat <- function(confmat) {
+   # This helper returns the sensitivity given a confusion matrix
+   return(confmat[1,1]/(confmat[1,1]+confmat[1,2]))
+}
+
+specificity_from_confmat <- function(confmat) {
+   # This helper returns the specificity given a confusion matrix
+   return(confmat[2,2]/(confmat[2,1]+confmat[2,2]))
+}
+```
+
+\tiny
+```{r}
+# This function converts PROBABILITIES to 1 and -1 CLASSES
+classvalXGB <- prob_to_class(rankingXGBval)
+
+# Calculate confusion matrix  to see balanced accuracy
+confusion.matrix <- table(classval,classvalXGB)
+kable(confusion.matrix, type="html",digits = 2,
+      caption="Actual versus Predicted Class (Validation)")
+```
+
+
+```{r}
+test.fs <- test %>% select_if(significant.variables)
+
+# Predict the test data (OUTPUTS LOG-ODDS) to get rankings
+rankingXGBtest <- predict(xgbModel, data.matrix(test.fs))
+rankingXGBtest <- as.numeric(rankingXGBtest)
+
+# no need to convert to 0 and 1 since ranking needed for AUC.
+write.table(rankingXGBtest,file = "classification.csv", row.names=F, col.names=F)
+```
+
+\tiny
+```{r}
+# Here is the mean prediction file for submission to the website 
+# features should be a column vector of 0's and 1's. 
+# 1 = keep feature, 0 = don't
+features<-matrix(0,nrow=(ncol(train)),ncol=1)
+rownames(features) <- colnames(train)
+
+# Set the ones we want to keep to 1
+features[significant.variables,1] <- 1
+write.table(features,file = "selection.csv", row.names=F, col.names=F)
+```
+
+\tiny
+```{r}
+# get time
+time <-  format(Sys.time(), "%H%M%S")
+
+#This automatically generates a compressed (zip) file 
+system(paste0("zip -u JSEEntry-", time, ".csv.zip classification.csv"))
+system(paste0("zip -u JSEEntry-", time, ".csv.zip selection.csv"))
+
+paste0("The name of your entry file: JSEEntry-", time, ".csv.zip")
+```
