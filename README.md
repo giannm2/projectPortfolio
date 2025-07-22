@@ -1,6 +1,6 @@
 # Michael Giannattasio Project Portfolio
 
-Hi! My name is Michael Giannattasio. I recieved my B.S. in Mathematics with minors in Data Science and Economics from Rensselaer Polytechnic Institute (RPI) in 2024 and will have my M.S. in Business Analytics in Spring 2025. 
+Hi! My name is Michael Giannattasio. I recieved my B.S. in Mathematics with minors in Data Science and Economics from Rensselaer Polytechnic Institute (RPI) in 2024 and my M.S. in Business Analytics in Spring 2025. I am actively seeking a job!
 
 This GitHub page serves as a hub for some of the projects from my data science journey. These projects include both personal development of skills and the understanding of AI/ML algorithms and direct application of data science techniques to a myriad of problems and data sources.
 
